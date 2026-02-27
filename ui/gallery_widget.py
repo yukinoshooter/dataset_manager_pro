@@ -21,6 +21,7 @@ class GalleryWidget(QWidget):
         self.filtered_data = []
 
         self.selected_folders = []
+        self.rating_filter = None
         self.size_range = None
         self.min_width = None
         self.min_height = None
@@ -116,6 +117,13 @@ class GalleryWidget(QWidget):
                 and img["height"] >= self.min_height
             ]
 
+        # Rating filter
+        if self.rating_filter is not None:
+            data = [
+                img for img in data
+                if img.get("rating", 0) in self.rating_filter
+            ]
+
         self.filtered_data = data
         self.display_images(self.filtered_data)
 
@@ -184,6 +192,10 @@ class GalleryWidget(QWidget):
                     break
 
             self.metadata.set_rating(img_name, rating)
+
+    def set_rating_filter(self, ratings):
+        self.rating_filter = ratings
+        self.apply_filters()
 
     # -----------------------------
     # Sorting

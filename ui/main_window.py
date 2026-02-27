@@ -2,8 +2,11 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
     QFileDialog, QToolBar, QPushButton,
     QDockWidget, QComboBox, QLabel, QWidgetAction,
-    QSizePolicy, QLineEdit
+    QSizePolicy, QLineEdit, QToolButton, QMenu,
+    QCheckBox
 )
+import shutil
+from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QShortcut, QKeySequence
 
@@ -87,7 +90,25 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(spacer)
 
         # RIGHT SIDE (like Stability Matrix)
+        
+        # Dataset Management
+        # Select All
+        self.select_all_btn = QPushButton("Select All")
+        self.select_all_btn.clicked.connect(self.select_all_images)
+        toolbar.addWidget(self.select_all_btn)
+
+        # Deselect All
+        self.deselect_all_btn = QPushButton("Clear Selection")
+        self.deselect_all_btn.clicked.connect(self.clear_selection)
+        toolbar.addWidget(self.deselect_all_btn)
+
+        # Move Selected
+        self.move_selected_btn = QPushButton("Move Selected")
+        self.move_selected_btn.clicked.connect(self.move_selected_images)
+        toolbar.addWidget(self.move_selected_btn)
+                
         # sort image
+        toolbar.addSeparator()
         toolbar.addWidget(QLabel("Sort:"))
 
         self.sort_dropdown = QComboBox()
@@ -102,8 +123,9 @@ class MainWindow(QMainWindow):
             self.gallery.sort_images
         )
         
-        toolbar.addSeparator()
         # size dropdown
+
+        toolbar.addSeparator()
         toolbar.addWidget(QLabel("Size"))
 
         self.size_dropdown = QComboBox()
@@ -141,9 +163,50 @@ class MainWindow(QMainWindow):
         self.min_width_input.editingFinished.connect(self.apply_size_filter)
         self.min_height_input.editingFinished.connect(self.apply_size_filter)
 
+        # ---------- rating dropdown (checkbox menu) ----------
         toolbar.addSeparator()
-        
+        toolbar.addWidget(QLabel("Rating:"))
+
+        self.rating_button = QToolButton()
+        self.rating_button.setText("Any ▼")
+        self.rating_button.setPopupMode(QToolButton.InstantPopup)
+
+        self.rating_menu = QMenu(self)
+        self.rating_checkboxes = {}
+
+        # --- Any checkbox ---
+        self.any_checkbox = QCheckBox("Any")
+        self.any_checkbox.setChecked(True)
+        self.any_checkbox.stateChanged.connect(self.handle_any_rating_toggle)
+
+        any_action = QWidgetAction(self)
+        any_action.setDefaultWidget(self.any_checkbox)
+        self.rating_menu.addAction(any_action)
+
+        self.rating_menu.addSeparator()
+
+        # --- Rating checkboxes (0 = Unrated) ---
+        for i in range(0, 6):
+            text = "Unrated" if i == 0 else f"{i}★"
+            checkbox = QCheckBox(text)
+            checkbox.setChecked(True)  # default visible
+            checkbox.stateChanged.connect(self.apply_rating_filter)
+
+            action = QWidgetAction(self)
+            action.setDefaultWidget(checkbox)
+            self.rating_menu.addAction(action)
+
+            self.rating_checkboxes[i] = checkbox
+
+        # Save the *initial* selection snapshot so "Any" can restore it
+        self._initial_rating_state = {r: cb.isChecked() for r, cb in self.rating_checkboxes.items()}
+
+        self.rating_button.setMenu(self.rating_menu)
+        toolbar.addWidget(self.rating_button)
+        # ---------------------------------------------------
+
         # image count
+        toolbar.addSeparator()
         self.image_count_label = QLabel("Images: 0")
         toolbar.addWidget(self.image_count_label)
 
@@ -155,6 +218,38 @@ class MainWindow(QMainWindow):
         if folder:
             self.gallery.load_folder(folder)
             self.folder_panel.load_subfolders(folder)
+
+    def select_all_images(self):
+        self.gallery.list_widget.selectAll()
+
+    def clear_selection(self):
+        self.gallery.list_widget.clearSelection()
+
+    def move_selected_images(self):
+        selected_items = self.gallery.list_widget.selectedItems()
+
+        if not selected_items:
+            return
+
+        # Ask for destination folder inside dataset
+        dest_folder = QFileDialog.getExistingDirectory(
+            self, "Select Destination Folder"
+        )
+
+        if not dest_folder:
+            return
+
+        dest_path = Path(dest_folder)
+
+        for item in selected_items:
+            src_path = Path(item.data(Qt.UserRole))
+            try:
+                shutil.move(str(src_path), str(dest_path / src_path.name))
+            except Exception as e:
+                print("Move failed:", e)
+
+        # Reload gallery after move
+        self.gallery.load_folder(str(self.gallery.root_path))
 
     def handle_size_mode(self, text):
         if text == "At least...":
@@ -193,6 +288,46 @@ class MainWindow(QMainWindow):
                     self.gallery.set_min_dimensions(w, h)
             except:
                 pass
+    
+    def handle_any_rating_toggle(self, state):
+        checked = state == Qt.Checked
+
+        # Force all rating checkboxes to match "Any"
+        for cb in self.rating_checkboxes.values():
+            cb.blockSignals(True)
+            cb.setChecked(checked)
+            cb.blockSignals(False)
+
+        # Apply filter
+        if checked:
+            self.rating_button.setText("Any ▼")
+            self.gallery.set_rating_filter(None)
+        else:
+            self.rating_button.setText("None ▼")
+            self.gallery.set_rating_filter([])
+
+
+    def apply_rating_filter(self):
+        selected = [r for r, cb in self.rating_checkboxes.items() if cb.isChecked()]
+        total = len(self.rating_checkboxes)
+
+        # Update "Any" automatically
+        self.any_checkbox.blockSignals(True)
+
+        if len(selected) == total:
+            self.any_checkbox.setChecked(True)
+            self.rating_button.setText("Any ▼")
+            self.gallery.set_rating_filter(None)
+        elif len(selected) == 0:
+            self.any_checkbox.setChecked(False)
+            self.rating_button.setText("None ▼")
+            self.gallery.set_rating_filter([])
+        else:
+            self.any_checkbox.setChecked(False)
+            self.rating_button.setText("Custom ▼")
+            self.gallery.set_rating_filter(selected)
+
+        self.any_checkbox.blockSignals(False)
 
     def update_image_count(self):
         count = self.gallery.list_widget.count()

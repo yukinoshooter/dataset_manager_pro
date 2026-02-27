@@ -43,7 +43,7 @@ class FolderPanel(QWidget):
             if sub.is_dir():
                 item = QTreeWidgetItem(parent_item)
                 item.setText(0, sub.name)
-                item.setCheckState(0, Qt.Unchecked)
+                item.setCheckState(0, Qt.Checked)
                 item.setData(0, Qt.UserRole, str(sub))
 
                 self.add_children(item, sub)
