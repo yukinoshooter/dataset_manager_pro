@@ -3,12 +3,14 @@ from PySide6.QtWidgets import (
     QFileDialog, QToolBar, QPushButton,
     QDockWidget, QComboBox, QLabel, QWidgetAction,
     QSizePolicy, QLineEdit, QToolButton, QMenu,
-    QCheckBox
+    QCheckBox, QInputDialog, QMessageBox
 )
+from PySide6.QtGui import QIcon
 import shutil
 from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QShortcut, QKeySequence
+from send2trash import send2trash
 
 from ui.gallery_widget import GalleryWidget
 from ui.preview_panel import PreviewPanel
@@ -28,6 +30,25 @@ class MainWindow(QMainWindow):
         QListWidget { background-color: #1e1e1e; color: white; }
         QToolBar { background-color: #2b2b2b; spacing: 10px; }
         QPushButton { background-color: #3a3a3a; color: white; padding: 5px; }
+        QToolButton { background-color: #3a3a3a; color: white; padding: 5px; }
+
+        QMessageBox {
+            background-color: #f0f0f0;
+        }
+        QMessageBox QLabel {
+            color: black;
+        }
+
+        QInputDialog {
+            background-color: #f0f0f0;
+        }
+        QInputDialog QLabel {
+            color: black;
+        }
+        QInputDialog QLineEdit {
+            background-color: white;
+            color: black;
+        }
         """)
 
         self.gallery = GalleryWidget()
@@ -76,13 +97,21 @@ class MainWindow(QMainWindow):
         self.addToolBar(toolbar)
 
         # LEFT SIDE
-        open_btn = QPushButton("Open Dataset")
-        open_btn.clicked.connect(self.open_folder)
-        toolbar.addWidget(open_btn)
 
         toggle_btn = QPushButton("Toggle Subfolders")
         toggle_btn.clicked.connect(self.toggle_dock)
         toolbar.addWidget(toggle_btn)
+
+        # Refresh Button
+        self.refresh_btn = QToolButton()
+        self.refresh_btn.setText("⟳")
+        self.refresh_btn.setToolTip("Refresh Gallery")
+        self.refresh_btn.clicked.connect(self.refresh_gallery)
+        toolbar.addWidget(self.refresh_btn)
+
+        open_btn = QPushButton("Open Dataset")
+        open_btn.clicked.connect(self.open_folder)
+        toolbar.addWidget(open_btn)
 
         # Spacer pushes everything after this to right
         spacer = QWidget()
@@ -106,6 +135,18 @@ class MainWindow(QMainWindow):
         self.move_selected_btn = QPushButton("Move Selected")
         self.move_selected_btn.clicked.connect(self.move_selected_images)
         toolbar.addWidget(self.move_selected_btn)
+
+        toolbar.addSeparator()
+
+        # Create Folder
+        self.create_folder_btn = QPushButton("New Folder")
+        self.create_folder_btn.clicked.connect(self.create_new_folder)
+        toolbar.addWidget(self.create_folder_btn)
+
+        # Delete Selected
+        self.delete_selected_btn = QPushButton("Delete Selected")
+        self.delete_selected_btn.clicked.connect(self.delete_selected_images)
+        toolbar.addWidget(self.delete_selected_btn)
                 
         # sort image
         toolbar.addSeparator()
@@ -210,6 +251,10 @@ class MainWindow(QMainWindow):
         self.image_count_label = QLabel("Images: 0")
         toolbar.addWidget(self.image_count_label)
 
+    def refresh_gallery(self):
+        if self.gallery.root_path:
+            self.gallery.load_folder(str(self.gallery.root_path))
+
     def toggle_dock(self):
         self.dock.setVisible(not self.dock.isVisible())
 
@@ -218,6 +263,8 @@ class MainWindow(QMainWindow):
         if folder:
             self.gallery.load_folder(folder)
             self.folder_panel.load_subfolders(folder)
+
+    # file management
 
     def select_all_images(self):
         self.gallery.list_widget.selectAll()
@@ -250,6 +297,60 @@ class MainWindow(QMainWindow):
 
         # Reload gallery after move
         self.gallery.load_folder(str(self.gallery.root_path))
+
+    def create_new_folder(self):
+        if not self.gallery.root_path:
+            return
+
+        folder_name, ok = QInputDialog.getText(
+            self,
+            "Create New Folder",
+            "Enter folder name:"
+        )
+
+        if ok and folder_name:
+            new_path = Path(self.gallery.root_path) / folder_name
+
+            try:
+                new_path.mkdir(exist_ok=False)
+            except FileExistsError:
+                QMessageBox.warning(self, "Error", "Folder already exists.")
+                return
+            except Exception as e:
+                QMessageBox.warning(self, "Error", str(e))
+                return
+
+            # Refresh folder panel
+            self.folder_panel.load_subfolders(str(self.gallery.root_path))
+
+    def delete_selected_images(self):
+        selected_items = self.gallery.list_widget.selectedItems()
+
+        if not selected_items:
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "Confirm Delete",
+            f"Send {len(selected_items)} selected image(s) to Recycle Bin?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+
+        if reply != QMessageBox.Yes:
+            return
+
+        for item in selected_items:
+            path = Path(item.data(Qt.UserRole))
+            try:
+                send2trash(str(path))
+            except Exception as e:
+                print("Delete failed:", e)
+
+        # Reload gallery
+        self.gallery.load_folder(str(self.gallery.root_path))
+        
+    #Filter
 
     def handle_size_mode(self, text):
         if text == "At least...":

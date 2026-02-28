@@ -20,7 +20,7 @@ class GalleryWidget(QWidget):
         self.images_data = []
         self.filtered_data = []
 
-        self.selected_folders = []
+        self.selected_folders = None
         self.rating_filter = None
         self.size_range = None
         self.min_width = None
@@ -51,13 +51,29 @@ class GalleryWidget(QWidget):
     # -----------------------------
 
     def load_folder(self, folder_path):
+        """
+        Load dataset folder.
+        Stops previous worker safely,
+        resets image data,
+        and initializes metadata manager.
+        """
         self.root_path = Path(folder_path)
+
+        # --- Stop previous worker safely ---
+        if hasattr(self, "worker") and self.worker.isRunning():
+            self.worker.quit()
+            self.worker.wait()
+
+        # --- Initialize metadata manager ---
         self.metadata = MetadataManager(folder_path)
+
+        # --- Reset state ---
         self.images_data = []
         self.filtered_data = []
         self.thumbnail_cache.clear()
         self.display_images([])
 
+        # --- Start background loader ---
         self.worker = ImageLoaderWorker(folder_path)
         self.worker.finished_loading.connect(self.on_loading_finished)
         self.worker.start()
@@ -95,11 +111,14 @@ class GalleryWidget(QWidget):
         data = self.images_data
 
         # Folder filter
-        if self.selected_folders:
-            data = [
-                img for img in data
-                if img["folder"] in self.selected_folders
-            ]
+        if self.selected_folders is not None:
+            if len(self.selected_folders) == 0:
+                data = []  # user unchecked all → show nothing
+            else:
+                data = [
+                    img for img in data
+                    if img["folder"] in self.selected_folders
+                ]
 
         # Size range filter (based on max dimension)
         if self.size_range:
