@@ -12,6 +12,8 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QShortcut, QKeySequence
 from send2trash import send2trash
 
+from core.settings_manager import SettingsManager
+from ui.settings_dialog import SettingsDialog
 from ui.gallery_widget import GalleryWidget
 from ui.preview_panel import PreviewPanel
 from ui.folder_panel import FolderPanel
@@ -50,7 +52,8 @@ class MainWindow(QMainWindow):
             color: black;
         }
         """)
-
+        
+        self.settings_manager = SettingsManager()
         self.gallery = GalleryWidget()
         self.preview = PreviewPanel()
         self.folder_panel = FolderPanel()
@@ -88,8 +91,25 @@ class MainWindow(QMainWindow):
         # Important: remove closable so it never disappears permanently
         self.dock.setFeatures(QDockWidget.DockWidgetMovable)
         self.addDockWidget(Qt.LeftDockWidgetArea, self.dock)
+        self.add_settings_button()
+
+        base_path = self.settings_manager.get_dataset_base_path()
+
+        if not base_path:
+            self.open_settings_dialog()
+            base_path = self.settings_manager.get_dataset_base_path()
+
+        if not base_path:
+            QMessageBox.critical(
+                self,
+                "Dataset Base Required",
+                "Dataset Base must be set to use this app."
+            )
+            self.close()
+            return
 
         self.create_toolbar()
+        self.load_dataset_list()
 
     def create_toolbar(self):
         toolbar = QToolBar()
@@ -98,10 +118,10 @@ class MainWindow(QMainWindow):
 
         # LEFT SIDE
 
-        toggle_btn = QPushButton("Toggle Subfolders")
+        toggle_btn = QPushButton("T☰ Toggle")
         toggle_btn.clicked.connect(self.toggle_dock)
         toolbar.addWidget(toggle_btn)
-
+        
         # Refresh Button
         self.refresh_btn = QToolButton()
         self.refresh_btn.setText("⟳")
@@ -109,9 +129,12 @@ class MainWindow(QMainWindow):
         self.refresh_btn.clicked.connect(self.refresh_gallery)
         toolbar.addWidget(self.refresh_btn)
 
-        open_btn = QPushButton("Open Dataset")
-        open_btn.clicked.connect(self.open_folder)
-        toolbar.addWidget(open_btn)
+        #Dataset button
+        toolbar.addWidget(QLabel("Dataset:"))
+
+        self.dataset_dropdown = QComboBox()
+        self.dataset_dropdown.currentTextChanged.connect(self.load_selected_dataset)
+        toolbar.addWidget(self.dataset_dropdown)
 
         # Spacer pushes everything after this to right
         spacer = QWidget()
@@ -251,18 +274,56 @@ class MainWindow(QMainWindow):
         self.image_count_label = QLabel("Images: 0")
         toolbar.addWidget(self.image_count_label)
 
+    def add_settings_button(self):
+        self.settings_button = QPushButton("⚙ Settings")
+        self.settings_button.setFixedHeight(28)
+        self.settings_button.clicked.connect(self.open_settings_dialog)
+
+        # Place below dock title
+        self.dock.setTitleBarWidget(QWidget())
+        dock_layout = QVBoxLayout()
+        dock_layout.setContentsMargins(4, 4, 4, 4)
+
+        container = QWidget()
+        dock_layout.addWidget(self.settings_button)
+        dock_layout.addWidget(self.folder_panel)
+        container.setLayout(dock_layout)
+
+        self.dock.setWidget(container)
+
+    def open_settings_dialog(self):
+        dialog = SettingsDialog(self.settings_manager)
+        dialog.exec()
+    
+    #Load Dataset
+    def load_dataset_list(self):
+        base_path = Path(self.settings_manager.get_dataset_base_path())
+
+        datasets = [
+            f.name for f in base_path.iterdir()
+            if f.is_dir() and f.name != "_metadata"
+        ]
+
+        self.dataset_dropdown.clear()
+        self.dataset_dropdown.addItems(sorted(datasets))
+
+    def load_selected_dataset(self, dataset_name):
+        if not dataset_name:
+            return
+
+        base_path = Path(self.settings_manager.get_dataset_base_path())
+        dataset_path = base_path / dataset_name
+
+        self.gallery.load_folder(str(dataset_path))
+        self.folder_panel.load_subfolders(str(dataset_path))
+    
+    #Refresh gallery
     def refresh_gallery(self):
         if self.gallery.root_path:
             self.gallery.load_folder(str(self.gallery.root_path))
 
     def toggle_dock(self):
         self.dock.setVisible(not self.dock.isVisible())
-
-    def open_folder(self):
-        folder = QFileDialog.getExistingDirectory(self, "Select Dataset Folder")
-        if folder:
-            self.gallery.load_folder(folder)
-            self.folder_panel.load_subfolders(folder)
 
     # file management
 
@@ -308,20 +369,30 @@ class MainWindow(QMainWindow):
             "Enter folder name:"
         )
 
-        if ok and folder_name:
-            new_path = Path(self.gallery.root_path) / folder_name
+        if not (ok and folder_name):
+            return
 
-            try:
-                new_path.mkdir(exist_ok=False)
-            except FileExistsError:
-                QMessageBox.warning(self, "Error", "Folder already exists.")
-                return
-            except Exception as e:
-                QMessageBox.warning(self, "Error", str(e))
-                return
+        # 🔥 Determine selected folder in tree
+        current_item = self.folder_panel.tree.currentItem()
 
-            # Refresh folder panel
-            self.folder_panel.load_subfolders(str(self.gallery.root_path))
+        if current_item and current_item.data(0, Qt.UserRole):
+            target_path = Path(current_item.data(0, Qt.UserRole))
+        else:
+            target_path = Path(self.gallery.root_path)
+
+        new_path = target_path / folder_name
+
+        try:
+            new_path.mkdir(exist_ok=False)
+        except FileExistsError:
+            QMessageBox.warning(self, "Error", "Folder already exists.")
+            return
+        except Exception as e:
+            QMessageBox.warning(self, "Error", str(e))
+            return
+
+        # 🔥 Add new folder to tree without full reload
+        self.folder_panel.add_folder_to_tree(str(new_path))
 
     def delete_selected_images(self):
         selected_items = self.gallery.list_widget.selectedItems()

@@ -65,7 +65,12 @@ class GalleryWidget(QWidget):
             self.worker.wait()
 
         # --- Initialize metadata manager ---
-        self.metadata = MetadataManager(folder_path)
+        from core.settings_manager import SettingsManager
+
+        settings = SettingsManager()
+        dataset_base = settings.get_dataset_base_path()
+
+        self.metadata = MetadataManager(folder_path, dataset_base)
 
         # --- Reset state ---
         self.images_data = []
@@ -83,8 +88,19 @@ class GalleryWidget(QWidget):
 
         # Load saved ratings
         for img in self.images_data:
-            img_name = Path(img["path"]).name
-            img["rating"] = self.metadata.get_rating(img_name)
+            relative_path = str(
+                Path(img["path"]).relative_to(self.root_path)
+            ).replace("\\", "/")
+
+            img["rating"] = self.metadata.get_rating(relative_path)
+
+         # Clean invalid rating entries
+        valid_paths = [
+            str(Path(img["path"]).relative_to(self.root_path)).replace("\\", "/")
+            for img in self.images_data
+        ]
+        self.metadata.clean_orphan_entries(valid_paths)
+        
         self.apply_filters()
 
     # -----------------------------
@@ -202,15 +218,20 @@ class GalleryWidget(QWidget):
             return
 
         for item in selected_items:
-            path = item.data(Qt.UserRole)
-            img_name = Path(path).name
+            path = Path(item.data(Qt.UserRole))
 
+            # 🔥 relative path inside current root
+            relative_path = str(Path(path).relative_to(self.root_path)).replace("\\", "/")
+
+            # Update image_data
             for img in self.images_data:
-                if img["path"] == path:
+                if img["path"] == str(path):
                     img["rating"] = rating
                     break
 
-            self.metadata.set_rating(img_name, rating)
+            self.metadata.set_rating(relative_path, rating)
+
+        self.apply_filters()
 
     def set_rating_filter(self, ratings):
         self.rating_filter = ratings
